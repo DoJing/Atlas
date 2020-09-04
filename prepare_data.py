@@ -18,7 +18,7 @@ import argparse
 import json
 import os
 
-import open3d as o3d
+#import open3d as o3d
 import numpy as np
 import torch
 import trimesh
@@ -26,7 +26,7 @@ import trimesh
 from atlas.data import SceneDataset, load_info_json
 from atlas.datasets.scannet import prepare_scannet_scene, prepare_scannet_splits
 from atlas.datasets.rio import prepare_rio_scene
-from atlas.datasets.sample import prepare_sample_scene
+from atlas.datasets.sample import prepare_sample_scene , prepare_test_scene
 import atlas.transforms as transforms
 from atlas.tsdf import TSDFFusion, TSDF, coordinates, depth_to_world
 
@@ -141,122 +141,122 @@ def fuse_scene(path_meta, scene, voxel_size, trunc_ratio=3, max_depth=3,
 
 
 # use labeled mesh to label surface voxels in tsdf
-def label_scene(path_meta, scene, voxel_size, dist_thresh=.05, verbose=2):
-    """ Transfer instance labels from ground truth mesh to TSDF
-
-    For each voxel find the nearest vertex and transfer the label if
-    it is close enough to the voxel.
-
-    Args:
-        path_meta: path to save the TSDFs 
-            (we recommend creating a parallel directory structure to save 
-            derived data so that we don't modify the original dataset)
-        scene: name of scene to process
-        voxel_size: voxel size of TSDF to process
-        dist_thresh: beyond this distance labels are not transferd
-        verbose: how much logging to print
-
-    Returns:
-        Updates the TSDF (.npz) file with the instance volume
-    """
-
-    # dist_thresh: beyond this distance to nearest gt mesh vertex, 
-    # voxels are not labeled
-    if verbose>0:
-        print('labeling', scene)
-
-    info_file = os.path.join(path_meta, scene, 'info.json')
-    data = load_info_json(info_file)
-
-    # each vertex in gt mesh indexs a seg group
-    segIndices = json.load(open(data['file_name_seg_indices'], 'r'))['segIndices']
-
-    # maps seg groups to instances
-    segGroups = json.load(open(data['file_name_seg_groups'], 'r'))['segGroups']
-    mapping = {ind:group['id']+1 for group in segGroups for ind in group['segments']}
-
-    # get per vertex instance ids (0 is unknown, [1,...] are objects)
-    n = len(segIndices)
-    instance_verts = torch.zeros(n, dtype=torch.long)
-    for i in range(n):
-        if segIndices[i] in mapping:
-            instance_verts[i] = mapping[segIndices[i]]
-
-    # load vertex locations
-    mesh = trimesh.load(data['file_name_mesh_gt'], process=False)
-    verts = mesh.vertices
-
-    # construct kdtree of vertices for fast nn lookup
-    pcd = o3d.geometry.PointCloud()
-    pcd.points  = o3d.utility.Vector3dVector(verts)
-    kdtree = o3d.geometry.KDTreeFlann(pcd)
-
-    # load tsdf volume
-    tsdf = TSDF.load(data['file_name_vol_%02d'%voxel_size])
-    coords = coordinates(tsdf.tsdf_vol.size(), device=torch.device('cpu'))
-    coords = coords.type(torch.float) * tsdf.voxel_size + tsdf.origin.T
-    mask = tsdf.tsdf_vol.abs().view(-1)<1
-
-    # transfer vertex instance ids to voxels near surface
-    instance_vol = torch.zeros(len(mask), dtype=torch.long)
-    for i in mask.nonzero():
-        _, inds, dist = kdtree.search_knn_vector_3d(coords[:,i], 1)
-        if dist[0]<dist_thresh:
-            instance_vol[i] = instance_verts[inds[0]]
-
-    tsdf.attribute_vols['instance'] = instance_vol.view(list(tsdf.tsdf_vol.size()))
-    tsdf.save(data['file_name_vol_%02d'%voxel_size])
-
-    key = 'vol_%02d'%voxel_size
-    temp_data = {key:tsdf, 'instances':data['instances'], 'dataset':data['dataset']}
-    tsdf = transforms.InstanceToSemseg('nyu40')(temp_data)[key]
-    mesh = tsdf.get_mesh('semseg')
-    fname = data['file_name_vol_%02d'%voxel_size]
-    mesh.export(fname.replace('tsdf', 'mesh').replace('.npz','_semseg.ply'))
-
-
-def prepare_scannet(path, path_meta, i=0, n=1, test_only=False, max_depth=3):
-    """ Create all derived data need for the Scannet dataset
-
-    For each scene an info.json file is created containg all meta data required
-    by the dataloaders. We also create the ground truth TSDFs by fusing the
-    ground truth TSDFs and add semantic labels
-
-    Args:
-        path: path to the scannet dataset
-        path_meta: path to save all the derived data
-            (we recommend creating a parallel directory structure so that 
-            we don't modify the original dataset)
-        i: process id (used for parallel processing)
-            (this process operates on scenes [i::n])
-        n: number of processes
-        test_only: only prepare the test set (for rapid testing if you dont 
-            plan to train)
-        max_depth: mask out large depth values since they are noisy
-
-    Returns:
-        Writes files to path_meta
-    """
-    
-    scenes = []
-    if not test_only:
-        scenes += sorted([os.path.join('scans', scene) 
-                          for scene in os.listdir(os.path.join(path, 'scans'))])
-    scenes += sorted([os.path.join('scans_test', scene)
-                      for scene in os.listdir(os.path.join(path, 'scans_test'))])
-
-    scenes = scenes[i::n]
-
-    if i==0:
-        prepare_scannet_splits(path, path_meta)
-
-    for scene in scenes:
-        prepare_scannet_scene(scene, path, path_meta)
-        for voxel_size in [4,8,16]:
-            fuse_scene(path_meta, scene, voxel_size, device=i%8, max_depth=max_depth)
-            if scene.split('/')[0]=='scans':
-                label_scene(path_meta, scene, voxel_size)
-
+# def label_scene(path_meta, scene, voxel_size, dist_thresh=.05, verbose=2):
+#     """ Transfer instance labels from ground truth mesh to TSDF
+#
+#     For each voxel find the nearest vertex and transfer the label if
+#     it is close enough to the voxel.
+#
+#     Args:
+#         path_meta: path to save the TSDFs
+#             (we recommend creating a parallel directory structure to save
+#             derived data so that we don't modify the original dataset)
+#         scene: name of scene to process
+#         voxel_size: voxel size of TSDF to process
+#         dist_thresh: beyond this distance labels are not transferd
+#         verbose: how much logging to print
+#
+#     Returns:
+#         Updates the TSDF (.npz) file with the instance volume
+#     """
+#
+#     # dist_thresh: beyond this distance to nearest gt mesh vertex,
+#     # voxels are not labeled
+#     if verbose>0:
+#         print('labeling', scene)
+#
+#     info_file = os.path.join(path_meta, scene, 'info.json')
+#     data = load_info_json(info_file)
+#
+#     # each vertex in gt mesh indexs a seg group
+#     segIndices = json.load(open(data['file_name_seg_indices'], 'r'))['segIndices']
+#
+#     # maps seg groups to instances
+#     segGroups = json.load(open(data['file_name_seg_groups'], 'r'))['segGroups']
+#     mapping = {ind:group['id']+1 for group in segGroups for ind in group['segments']}
+#
+#     # get per vertex instance ids (0 is unknown, [1,...] are objects)
+#     n = len(segIndices)
+#     instance_verts = torch.zeros(n, dtype=torch.long)
+#     for i in range(n):
+#         if segIndices[i] in mapping:
+#             instance_verts[i] = mapping[segIndices[i]]
+#
+#     # load vertex locations
+#     mesh = trimesh.load(data['file_name_mesh_gt'], process=False)
+#     verts = mesh.vertices
+#
+#     # construct kdtree of vertices for fast nn lookup
+#     pcd = o3d.geometry.PointCloud()
+#     pcd.points  = o3d.utility.Vector3dVector(verts)
+#     kdtree = o3d.geometry.KDTreeFlann(pcd)
+#
+#     # load tsdf volume
+#     tsdf = TSDF.load(data['file_name_vol_%02d'%voxel_size])
+#     coords = coordinates(tsdf.tsdf_vol.size(), device=torch.device('cpu'))
+#     coords = coords.type(torch.float) * tsdf.voxel_size + tsdf.origin.T
+#     mask = tsdf.tsdf_vol.abs().view(-1)<1
+#
+#     # transfer vertex instance ids to voxels near surface
+#     instance_vol = torch.zeros(len(mask), dtype=torch.long)
+#     for i in mask.nonzero():
+#         _, inds, dist = kdtree.search_knn_vector_3d(coords[:,i], 1)
+#         if dist[0]<dist_thresh:
+#             instance_vol[i] = instance_verts[inds[0]]
+#
+#     tsdf.attribute_vols['instance'] = instance_vol.view(list(tsdf.tsdf_vol.size()))
+#     tsdf.save(data['file_name_vol_%02d'%voxel_size])
+#
+#     key = 'vol_%02d'%voxel_size
+#     temp_data = {key:tsdf, 'instances':data['instances'], 'dataset':data['dataset']}
+#     tsdf = transforms.InstanceToSemseg('nyu40')(temp_data)[key]
+#     mesh = tsdf.get_mesh('semseg')
+#     fname = data['file_name_vol_%02d'%voxel_size]
+#     mesh.export(fname.replace('tsdf', 'mesh').replace('.npz','_semseg.ply'))
+#
+#
+# def prepare_scannet(path, path_meta, i=0, n=1, test_only=False, max_depth=3):
+#     """ Create all derived data need for the Scannet dataset
+#
+#     For each scene an info.json file is created containg all meta data required
+#     by the dataloaders. We also create the ground truth TSDFs by fusing the
+#     ground truth TSDFs and add semantic labels
+#
+#     Args:
+#         path: path to the scannet dataset
+#         path_meta: path to save all the derived data
+#             (we recommend creating a parallel directory structure so that
+#             we don't modify the original dataset)
+#         i: process id (used for parallel processing)
+#             (this process operates on scenes [i::n])
+#         n: number of processes
+#         test_only: only prepare the test set (for rapid testing if you dont
+#             plan to train)
+#         max_depth: mask out large depth values since they are noisy
+#
+#     Returns:
+#         Writes files to path_meta
+#     """
+#
+#     scenes = []
+#     if not test_only:
+#         scenes += sorted([os.path.join('scans', scene)
+#                           for scene in os.listdir(os.path.join(path, 'scans'))])
+#     scenes += sorted([os.path.join('scans_test', scene)
+#                       for scene in os.listdir(os.path.join(path, 'scans_test'))])
+#
+#     scenes = scenes[i::n]
+#
+#     if i==0:
+#         prepare_scannet_splits(path, path_meta)
+#
+#     for scene in scenes:
+#         prepare_scannet_scene(scene, path, path_meta)
+#         for voxel_size in [4,8,16]:
+#             fuse_scene(path_meta, scene, voxel_size, device=i%8, max_depth=max_depth)
+#             if scene.split('/')[0]=='scans':
+#                 label_scene(path_meta, scene, voxel_size)
+#
 
 
 # def prepare_rio(path, path_meta, i=0, n=1):
@@ -323,7 +323,18 @@ if __name__ == "__main__":
     n=args.n
     assert 0<=i and i<n
 
-    if args.dataset == 'sample':
+
+    if args.dataset == 'test':
+        scenes = ['sample1']
+        scenes = scenes[i::n] # distribute among workers
+        for scene in scenes:
+            prepare_test_scene(
+                scene,
+                os.path.join(args.path, 'test'),
+                os.path.join(args.path_meta, 'test'),
+            )
+
+    elif args.dataset == 'sample':
         scenes = ['sample1']
         scenes = scenes[i::n] # distribute among workers
         for scene in scenes:
@@ -333,15 +344,15 @@ if __name__ == "__main__":
                 os.path.join(args.path_meta, 'sample'),
             )
 
-    elif args.dataset == 'scannet':
-        prepare_scannet(
-            os.path.join(args.path, 'scannet'),
-            os.path.join(args.path_meta, 'scannet'),
-            i,
-            n,
-            args.test,
-            args.max_depth
-        )
+    # elif args.dataset == 'scannet':
+    #     prepare_scannet(
+    #         os.path.join(args.path, 'scannet'),
+    #         os.path.join(args.path_meta, 'scannet'),
+    #         i,
+    #         n,
+    #         args.test,
+    #         args.max_depth
+    #     )
 
     # elif args.dataset == 'rio':
     #     prepare_rio(

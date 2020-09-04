@@ -114,7 +114,7 @@ python inference.py --model results/release/semseg/final.ckpt --scenes METAROOT/
 ```
 If your GPU does not have enough memory you can reduce `voxel_dim` (at the cost of possible clipping the scene)
 ```
-python inference.py --model results/release/semseg/final.ckpt --scenes METAROOT/sample/sample1/info.json --voxel_dim 208 208 80
+    python3 inference.py --model results/release/semseg/final.ckpt --scenes data/prepred/test/sample1/info.json --voxel_dim 208 208 80
 ```
 Note that the values of voxel_dim must be divisible by 8 using the default 3D network.
 
